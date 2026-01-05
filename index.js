@@ -7,21 +7,13 @@ app.use(express.json());
 
 const PORT = process.env.PORT || 3000;
 
-/* =====================================================
-   CONFIG
-===================================================== */
 const USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
-const PAY_TO = "4n9vJHPezhghfF6NCTSPgTbkGoV7EsQYtC2hfaKfrM8U"; // 👈 replace before deploy
-const BASE_URL = "https://schedoputer.onrender.com"; // 👈 replace
+const PAY_TO = "4n9vJHPezhghfF6NCTSPgTbkGoV7EsQYtC2hfaKfrM8U";
+const BASE_URL = "https://schedoputer.onrender.com";
 
-/* =====================================================
-   IN-MEMORY STORE
-===================================================== */
 const jobs = new Map();
 
-/* =====================================================
-   x402 DISCOVERY
-===================================================== */
+/* ===================== x402 DISCOVERY ===================== */
 app.get("/x402/solana/schedoputer", (req, res) => {
   res.status(402).json({
     x402Version: 1,
@@ -33,15 +25,34 @@ app.get("/x402/solana/schedoputer", (req, res) => {
         asset: USDC_MINT,
         payTo: PAY_TO,
         resource: `${BASE_URL}/x402/solana/schedoputer`,
-        description: "Schedoputer — scheduled orchestration of AI + human x402 workflows"
+        mimeType: "application/json",
+        description: "Schedoputer — scheduled orchestration of AI + human workflows",
+        outputSchema: {
+          input: {
+            type: "http",
+            method: "POST",
+            bodyType: "json",
+            bodyFields: {
+              prompt: { type: "string", required: true },
+              schedule_hhmm: { type: "string", required: true }
+            }
+          },
+          output: {
+            type: "lro",
+            statusUrlField: "statusUrl",
+            runIdField: "jobId",
+            finalResponseFields: {
+              state: { type: "string" },
+              context: { type: "object" }
+            }
+          }
+        }
       }
     ]
   });
 });
 
-/* =====================================================
-   JOB CREATION
-===================================================== */
+/* ===================== CREATE JOB ===================== */
 app.post("/x402/solana/schedoputer", (req, res) => {
   const { prompt, schedule_hhmm } = req.body;
   if (!prompt || !schedule_hhmm) {
@@ -52,182 +63,95 @@ app.post("/x402/solana/schedoputer", (req, res) => {
   const scheduledFor = new Date(Date.now() + (hh * 60 + mm) * 60 * 1000);
   const jobId = uuidv4();
 
-  const job = {
+  jobs.set(jobId, {
     jobId,
     prompt,
     scheduledFor,
     state: "scheduled",
     context: {},
     tasks: [
-      {
-        id: "T1",
-        name: "Research on X",
-        resourceUrl: "https://api.syraa.fun/x-search",
-        status: "pending"
-      },
-      {
-        id: "T2",
-        name: "Generate tweet (≤250 chars)",
-        resourceUrl: "https://x402factory.ai/solana/llm/gpt/AW5793DBAYAHSEHJTU",
-        status: "pending",
-        dependsOn: "T1"
-      },
-      {
-        id: "T3",
-        name: "Human X posting",
-        resourceUrl: "https://wurkapi.fun/solana/agenthelp/10",
-        type: "human",
-        status: "pending",
-        dependsOn: "T2"
-      },
-      {
-        id: "T4",
-        name: "Likes",
-        resourceUrl: "https://wurkapi.fun/api/x402/quick/solana/xlikes-20",
-        status: "pending",
-        dependsOn: "T3"
-      },
-      {
-        id: "T5",
-        name: "Reposts",
-        resourceUrl: "https://wurkapi.fun/solana/reposts/9",
-        status: "pending",
-        dependsOn: "T3"
-      },
-      {
-        id: "T6",
-        name: "Comments",
-        resourceUrl: "https://wurkapi.fun/solana/comments/7",
-        status: "pending",
-        dependsOn: "T3"
-      }
+      { id: "T1", name: "research", url: "https://api.syraa.fun/x-search", status: "pending" },
+      { id: "T2", name: "tweet", url: "https://x402factory.ai/solana/llm/gpt/AW5793DBAYAHSEHJTU", status: "pending", dependsOn: "T1" },
+      { id: "T3", name: "post", url: "https://wurkapi.fun/solana/agenthelp/10", status: "pending", dependsOn: "T2" },
+      { id: "T4", name: "likes", url: "https://wurkapi.fun/api/x402/quick/solana/xlikes-20", status: "pending", undoable: true, dependsOn: "T3" },
+      { id: "T5", name: "reposts", url: "https://wurkapi.fun/solana/reposts/9", status: "pending", undoable: true, dependsOn: "T3" },
+      { id: "T6", name: "comments", url: "https://wurkapi.fun/solana/comments/7", status: "pending", undoable: true, dependsOn: "T3" }
     ]
-  };
-
-  jobs.set(jobId, job);
+  });
 
   res.json({
     success: true,
     jobId,
-    scheduledFor,
-    statusUrl: `/x402/solana/schedoputer/status/${jobId}`
+    statusUrl: `${BASE_URL}/x402/solana/schedoputer/status/${jobId}`
   });
 });
 
-/* =====================================================
-   JOB STATUS
-===================================================== */
+/* ===================== STATUS ===================== */
 app.get("/x402/solana/schedoputer/status/:jobId", (req, res) => {
   const job = jobs.get(req.params.jobId);
   if (!job) return res.json({ state: "failed" });
-
-  res.json({
-    state: job.state,
-    tasks: job.tasks.map(t => ({ id: t.id, status: t.status })),
-    context: job.context
-  });
+  res.json({ state: job.state, context: job.context, tasks: job.tasks });
 });
 
-/* =====================================================
-   BACKGROUND SCHEDULER
-===================================================== */
+/* ===================== MODIFY TASK ===================== */
+app.patch("/x402/solana/schedoputer/:jobId/task/:taskId", (req, res) => {
+  const job = jobs.get(req.params.jobId);
+  const task = job?.tasks.find(t => t.id === req.params.taskId);
+
+  if (!task || task.status !== "pending") {
+    return res.status(400).json({ error: "Task cannot be modified" });
+  }
+
+  task.params = { ...task.params, ...req.body };
+  res.json({ success: true });
+});
+
+/* ===================== UNDO TASK ===================== */
+app.post("/x402/solana/schedoputer/:jobId/task/:taskId/undo", (req, res) => {
+  const job = jobs.get(req.params.jobId);
+  const task = job?.tasks.find(t => t.id === req.params.taskId);
+
+  if (!task || !task.undoable || task.status !== "pending") {
+    return res.status(400).json({ error: "Task cannot be undone" });
+  }
+
+  task.status = "cancelled";
+  res.json({ success: true });
+});
+
+/* ===================== EXECUTOR ===================== */
 setInterval(async () => {
-  const now = new Date();
-
   for (const job of jobs.values()) {
-    if (job.state === "scheduled" && now >= job.scheduledFor) {
+    if (job.state === "scheduled" && new Date() >= job.scheduledFor) {
       job.state = "running";
     }
-    if (job.state === "running") {
-      await runNextTask(job);
-    }
-  }
-}, 30_000);
 
-/* =====================================================
-   TASK EXECUTION
-===================================================== */
-async function runNextTask(job) {
-  const task = job.tasks.find(t => t.status === "pending");
-  if (!task) {
-    job.state = "completed";
-    return;
-  }
+    if (job.state !== "running") continue;
 
-  if (task.dependsOn) {
-    const dep = job.tasks.find(t => t.id === task.dependsOn);
-    if (!dep || dep.status !== "completed") return;
-  }
+    for (const task of job.tasks) {
+      if (task.status !== "pending") continue;
+      if (task.dependsOn) {
+        const dep = job.tasks.find(t => t.id === task.dependsOn);
+        if (!dep || dep.status !== "completed") continue;
+      }
 
-  task.status = "running";
+      const r = await fetch(task.url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ query: job.prompt })
+      });
 
-  if (task.type === "human") {
-    job.state = "waiting-human";
-    task.status = "waiting";
+      if (r.status === 402) return; // x402.jobs will retry
 
-    // WURK humans post & return URL
-    setTimeout(() => {
+      const data = await r.json();
+      job.context[task.name] = data;
       task.status = "completed";
-      job.context.tweetUrl = "https://x.com/example/status/123456";
-      job.state = "running";
-    }, 180_000);
+    }
 
-    return;
+    job.state = "completed";
   }
+}, 30000);
 
-  await callX402Resource(task, job);
-  task.status = "completed";
-}
-
-/* =====================================================
-   REAL x402 RESOURCE CALLS
-===================================================== */
-async function callX402Resource(task, job) {
-  // STEP 1: Initial call → expect 402
-  const res = await fetch(task.resourceUrl, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(buildPayload(task, job))
-  });
-
-  if (res.status === 402) {
-    // In real usage, client retries with X-PAYMENT
-    console.log(`💸 Payment required for ${task.resourceUrl}`);
-    job.context[`paymentRequired_${task.id}`] = true;
-    return;
-  }
-
-  const data = await res.json();
-
-  if (task.id === "T1") {
-    job.context.research = data;
-  }
-
-  if (task.id === "T2") {
-    job.context.tweet = data.reply?.slice(0, 250);
-  }
-}
-
-/* =====================================================
-   PAYLOAD BUILDER
-===================================================== */
-function buildPayload(task, job) {
-  if (task.id === "T1") {
-    return { query: job.prompt };
-  }
-
-  if (task.id === "T2") {
-    return {
-      message: `Write a concise tweet (≤250 chars) with hashtags about:\n${job.context.research}`
-    };
-  }
-
-  return {};
-}
-
-/* =====================================================
-   START SERVER
-===================================================== */
 app.listen(PORT, () => {
-  console.log(`🚀 Schedoputer live on port ${PORT}`);
+  console.log("🚀 Schedoputer fully live");
 });
