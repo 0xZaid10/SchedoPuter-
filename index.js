@@ -29,29 +29,47 @@ app.get("/x402/solana/schedoputer", (req, res) => {
       {
         scheme: "exact",
         network: "solana",
-        maxAmountRequired: "10000",
+        maxAmountRequired: "10000", // 0.01 USDC
         asset: USDC_MINT,
         payTo: PAY_TO,
         resource: `${BASE_URL}/x402/solana/schedoputer`,
         mimeType: "application/json",
-        description: "Schedoputer — scheduled orchestration of AI + human workflows",
+        maxTimeoutSeconds: 300,
+
+        description:
+          "Schedoputer orchestrates scheduled AI + human workflows with per-task control (modify/undo).",
+
+        /* 🔑 THIS IS WHAT YOU WERE MISSING */
         outputSchema: {
           input: {
             type: "http",
             method: "POST",
             bodyType: "json",
             bodyFields: {
-              prompt: { type: "string", required: true },
-              schedule_hhmm: { type: "string", required: true }
+              prompt: {
+                type: "string",
+                required: true,
+                description:
+                  "User instruction, e.g. 'Research DeFi on Base and promote it on X'"
+              },
+              schedule_hhmm: {
+                type: "string",
+                required: true,
+                description:
+                  "Delay before execution in hh:mm (hours:minutes)"
+              }
             }
           },
           output: {
-            type: "lro",
-            statusUrlField: "statusUrl",
-            runIdField: "jobId",
-            finalResponseFields: {
-              state: { type: "string" },
-              context: { type: "object" }
+            success: { type: "boolean" },
+            jobId: { type: "string" },
+            scheduledFor: {
+              type: "string",
+              description: "ISO timestamp when job will start"
+            },
+            statusUrl: {
+              type: "string",
+              description: "Polling endpoint for job status"
             }
           }
         }
