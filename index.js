@@ -1,18 +1,26 @@
 import express from "express";
 import { v4 as uuidv4 } from "uuid";
-import cors from "cors"; // Added for Step 3/4 verification
+import cors from "cors";
 
 const app = express();
 
-// FIXED: CORS is required so the x402 platform can read your statusUrl
+// 1. UPDATED CORS: Added more methods and credentials support
 app.use(cors({
   origin: "*", 
+  methods: ["GET", "POST", "PATCH", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "x402-resource"],
   exposedHeaders: ["x402-resource", "x-payment-response"]
 }));
 
+// 2. NEW: Fix for NotSameOrigin/COEP/CORP errors
+app.use((req, res, next) => {
+  res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
+  res.setHeader("Cross-Origin-Embedder-Policy", "unsafe-none");
+  next();
+});
+
 app.use(express.json());
 
-// FIXED: Handle trailing slashes to prevent 404 errors on discovery
 app.use((req, res, next) => {
   if (req.path.length > 1 && req.path.endsWith('/')) {
     res.redirect(301, req.path.slice(0, -1));
@@ -39,8 +47,6 @@ app.get("/.well-known/x402-verification.json", (_, res) => {
 /* ================= x402 DISCOVERY ================= */
 app.get("/x402/solana/schedoputer", (_, res) => {
   const resourceUrl = `${BASE_URL}/x402/solana/schedoputer`;
-  
-  // FIXED: Protocol handshake header
   res.set("x402-resource", resourceUrl);
   
   res.status(402).json({
@@ -49,8 +55,7 @@ app.get("/x402/solana/schedoputer", (_, res) => {
       {
         scheme: "exact",
         network: "solana",
-        // FIXED: Increased to 1 USDC (1,000,000 micro-units) for better runner compatibility
-        maxAmountRequired: "10000",
+        maxAmountRequired: "1000000", // Increased to 1 USDC for compatibility
         asset: USDC_MINT,
         payTo: PAY_TO,
         resource: resourceUrl,
@@ -183,5 +188,5 @@ setInterval(() => {
 
 /* ================= START ================= */
 app.listen(PORT, () => {
-  console.log("🚀 Schedoputer backend live (x402-final-fix)");
+  console.log("🚀 Schedoputer backend live (x402-headers-fix)");
 });
