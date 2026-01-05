@@ -1,0 +1,25 @@
+{
+  "name": "x402-schedoputer",
+  "version": "1.0.0",
+  "description": "Schedoputer — scheduled orchestration of AI + human workflows using x402",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "keywords": [
+    "x402",
+    "solana",
+    "automation",
+    "orchestration",
+    "ai",
+    "human-in-the-loop"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "express": "^4.19.2",
+    "node-fetch": "^3.3.2",
+    "uuid": "^9.0.1"
+  }
+}
