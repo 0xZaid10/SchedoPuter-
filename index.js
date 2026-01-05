@@ -41,7 +41,20 @@ app.get("/x402/solana/schedoputer", (_req, res) => {
         resource: "https://schedoputer.onrender.com/x402/solana/schedoputer",
         mimeType: "application/json",
         maxTimeoutSeconds: 300,
-        description: "Schedoputer – scheduled AI + human workflows"
+        description: "Schedoputer – scheduled AI + human workflows",
+
+        // 🔥 REQUIRED BY x402.jobs
+        extra: {
+          pricing: {
+            amount: 0.01,
+            currency: "USDC",
+            network: "Solana",
+            unit: "per-run"
+          },
+          serviceName: "Schedoputer",
+          category: "Workflow",
+          version: "1.0"
+        }
       }
     ]
   });
