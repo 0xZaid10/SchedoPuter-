@@ -1,34 +1,8 @@
 import express from "express";
 import { v4 as uuidv4 } from "uuid";
-import cors from "cors";
 
 const app = express();
-
-// 1. Permissive CORS to fix the "Fill in all required fields" error
-app.use(cors({
-  origin: "*", 
-  methods: ["GET", "POST", "PATCH", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "x402-resource", "Authorization"],
-  exposedHeaders: ["x402-resource", "x-payment-response"]
-}));
-
-// 2. Security Bypass for ERR_BLOCKED_BY_RESPONSE
-app.use((req, res, next) => {
-  res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
-  res.setHeader("Cross-Origin-Embedder-Policy", "unsafe-none");
-  next();
-});
-
 app.use(express.json());
-
-// 3. Handle trailing slashes
-app.use((req, res, next) => {
-  if (req.path.length > 1 && req.path.endsWith('/')) {
-    res.redirect(301, req.path.slice(0, -1));
-  } else {
-    next();
-  }
-});
 
 const PORT = process.env.PORT || 3000;
 
@@ -46,23 +20,21 @@ app.get("/.well-known/x402-verification.json", (_, res) => {
 });
 
 /* ================= x402 DISCOVERY ================= */
-app.get("/x402/solana/schedoputer", (req, res) => {
-  const resourceUrl = `${BASE_URL}/x402/solana/schedoputer`;
-  res.set("x402-resource", resourceUrl);
-  
+app.get("/x402/solana/schedoputer", (_, res) => {
   res.status(402).json({
     x402Version: 1,
     accepts: [
       {
         scheme: "exact",
         network: "solana",
-        maxAmountRequired: "10000", // $0.01 USDC
+        maxAmountRequired: "10000", // $0.01
         asset: USDC_MINT,
         payTo: PAY_TO,
-        resource: resourceUrl,
+        resource: `${BASE_URL}/x402/solana/schedoputer`,
         mimeType: "application/json",
         maxTimeoutSeconds: 300,
-        description: "Schedoputer: AI + Human workflow orchestration.",
+        description:
+          "Schedoputer orchestrates scheduled AI + human workflows with per-task modify/undo control.",
         outputSchema: {
           input: {
             type: "http",
@@ -70,7 +42,11 @@ app.get("/x402/solana/schedoputer", (req, res) => {
             bodyType: "json",
             bodyFields: {
               prompt: { type: "string", required: true },
-              schedule_hhmm: { type: "string", required: true }
+              schedule_hhmm: {
+                type: "string",
+                required: true,
+                description: "Delay before execution (hh:mm)"
+              }
             }
           },
           output: {
@@ -88,9 +64,16 @@ app.get("/x402/solana/schedoputer", (req, res) => {
 /* ================= CREATE JOB ================= */
 app.post("/x402/solana/schedoputer", (req, res) => {
   const { prompt, schedule_hhmm } = req.body;
-  if (!prompt || !schedule_hhmm) return res.status(400).json({ error: "Missing fields" });
+
+  if (!prompt || !schedule_hhmm) {
+    return res.status(400).json({ error: "prompt and schedule_hhmm required" });
+  }
 
   const [hh, mm] = schedule_hhmm.split(":").map(Number);
+  if (Number.isNaN(hh) || Number.isNaN(mm)) {
+    return res.status(400).json({ error: "Invalid schedule_hhmm format" });
+  }
+
   const scheduledFor = new Date(Date.now() + (hh * 60 + mm) * 60 * 1000);
   const jobId = uuidv4();
 
@@ -117,14 +100,19 @@ app.post("/x402/solana/schedoputer", (req, res) => {
   });
 });
 
-/* ================= STATUS ================= */
+/* ================= JOB STATUS ================= */
 app.get("/x402/solana/schedoputer/status/:jobId", (req, res) => {
   const job = jobs.get(req.params.jobId);
   if (!job) return res.json({ state: "failed" });
-  res.json({ state: job.state, tasks: job.tasks });
+
+  res.json({
+    state: job.state,
+    scheduledFor: job.scheduledFor,
+    tasks: job.tasks
+  });
 });
 
-/* ================= MODIFY LOGIC ================= */
+/* ================= MODIFY TASK ================= */
 app.patch("/x402/solana/schedoputer/:jobId/task/:taskId", (req, res) => {
   const job = jobs.get(req.params.jobId);
   const task = job?.tasks.find(t => t.id === req.params.taskId);
@@ -137,7 +125,7 @@ app.patch("/x402/solana/schedoputer/:jobId/task/:taskId", (req, res) => {
   res.json({ success: true });
 });
 
-/* ================= UNDO LOGIC ================= */
+/* ================= UNDO TASK ================= */
 app.post("/x402/solana/schedoputer/:jobId/task/:taskId/undo", (req, res) => {
   const job = jobs.get(req.params.jobId);
   const task = job?.tasks.find(t => t.id === req.params.taskId);
@@ -150,25 +138,33 @@ app.post("/x402/solana/schedoputer/:jobId/task/:taskId/undo", (req, res) => {
   res.json({ success: true });
 });
 
-/* ================= SCHEDULER ================= */
+/* ================= SCHEDULER (STATE ONLY) ================= */
 setInterval(() => {
   const now = new Date();
+
   for (const job of jobs.values()) {
     if (job.state === "scheduled" && now >= job.scheduledFor) {
       job.state = "running";
     }
+
     if (job.state !== "running") continue;
 
     for (const task of job.tasks) {
       if (task.status === "blocked") {
         const dep = job.tasks.find(t => t.id === task.dependsOn);
-        if (dep && dep.status === "completed") task.status = "pending";
+        if (dep && dep.status === "completed") {
+          task.status = "pending";
+        }
       }
     }
+
     if (job.tasks.every(t => ["completed", "cancelled"].includes(t.status))) {
       job.state = "completed";
     }
   }
-}, 30000);
+}, 30_000);
 
-app.listen(PORT, () => console.log("🚀 Schedoputer live with full logic ($0.01)"));
+/* ================= START ================= */
+app.listen(PORT, () => {
+  console.log("🚀 Schedoputer backend live (x402-correct)");
+});
