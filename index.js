@@ -6,28 +6,36 @@ app.use(express.json());
 
 const PORT = process.env.PORT || 3000;
 
-/* ================= CONFIG ================= */
-const USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
-const PAY_TO = "4n9vJHPezhghfF6NCTSPgTbkGoV7EsQYtC2hfaKfrM8U";
+/* =====================================================
+   CONFIG
+===================================================== */
 const BASE_URL = "https://schedoputer.onrender.com";
+const PAY_TO = "4n9vJHPezhghfF6NCTSPgTbkGoV7EsQYtC2hfaKfrM8U";
+const USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
 
-/* ================= STATE ================= */
+/* =====================================================
+   IN-MEMORY STATE (hackathon-safe)
+===================================================== */
 const jobs = new Map();
 
-/* ================= DOMAIN VERIFICATION ================= */
-app.get("/.well-known/x402-verification.json", (_, res) => {
+/* =====================================================
+   DOMAIN VERIFICATION (x402scan / x402.jobs)
+===================================================== */
+app.get("/.well-known/x402-verification.json", (_req, res) => {
   res.json({ x402: "b470847b6c14" });
 });
 
-/* ================= x402 DISCOVERY ================= */
-app.get("/x402/solana/schedoputer", (_, res) => {
+/* =====================================================
+   x402 DISCOVERY (PAYMENT HAPPENS HERE)
+===================================================== */
+app.get("/x402/solana/schedoputer", (_req, res) => {
   res.status(402).json({
     x402Version: 1,
     accepts: [
       {
         scheme: "exact",
         network: "solana",
-        maxAmountRequired: "10000", // $0.01
+        maxAmountRequired: "10000", // 0.01 USDC
         asset: USDC_MINT,
         payTo: PAY_TO,
         resource: `${BASE_URL}/x402/solana/schedoputer`,
@@ -41,7 +49,11 @@ app.get("/x402/solana/schedoputer", (_, res) => {
             method: "POST",
             bodyType: "json",
             bodyFields: {
-              prompt: { type: "string", required: true },
+              prompt: {
+                type: "string",
+                required: true,
+                description: "User instruction"
+              },
               schedule_hhmm: {
                 type: "string",
                 required: true,
@@ -61,12 +73,16 @@ app.get("/x402/solana/schedoputer", (_, res) => {
   });
 });
 
-/* ================= CREATE JOB ================= */
+/* =====================================================
+   PAID INVOCATION (CALLED AFTER PAYMENT)
+===================================================== */
 app.post("/x402/solana/schedoputer", (req, res) => {
   const { prompt, schedule_hhmm } = req.body;
 
   if (!prompt || !schedule_hhmm) {
-    return res.status(400).json({ error: "prompt and schedule_hhmm required" });
+    return res.status(400).json({
+      error: "prompt and schedule_hhmm required"
+    });
   }
 
   const [hh, mm] = schedule_hhmm.split(":").map(Number);
@@ -74,7 +90,10 @@ app.post("/x402/solana/schedoputer", (req, res) => {
     return res.status(400).json({ error: "Invalid schedule_hhmm format" });
   }
 
-  const scheduledFor = new Date(Date.now() + (hh * 60 + mm) * 60 * 1000);
+  const scheduledFor = new Date(
+    Date.now() + (hh * 60 + mm) * 60 * 1000
+  );
+
   const jobId = uuidv4();
 
   jobs.set(jobId, {
@@ -100,19 +119,24 @@ app.post("/x402/solana/schedoputer", (req, res) => {
   });
 });
 
-/* ================= JOB STATUS ================= */
+/* =====================================================
+   JOB STATUS (LRO)
+===================================================== */
 app.get("/x402/solana/schedoputer/status/:jobId", (req, res) => {
   const job = jobs.get(req.params.jobId);
-  if (!job) return res.json({ state: "failed" });
+  if (!job) {
+    return res.json({ state: "failed", error: "Job not found" });
+  }
 
   res.json({
     state: job.state,
-    scheduledFor: job.scheduledFor,
     tasks: job.tasks
   });
 });
 
-/* ================= MODIFY TASK ================= */
+/* =====================================================
+   MODIFY TASK (pre-execution only)
+===================================================== */
 app.patch("/x402/solana/schedoputer/:jobId/task/:taskId", (req, res) => {
   const job = jobs.get(req.params.jobId);
   const task = job?.tasks.find(t => t.id === req.params.taskId);
@@ -125,7 +149,9 @@ app.patch("/x402/solana/schedoputer/:jobId/task/:taskId", (req, res) => {
   res.json({ success: true });
 });
 
-/* ================= UNDO TASK ================= */
+/* =====================================================
+   UNDO TASK (supported tasks only)
+===================================================== */
 app.post("/x402/solana/schedoputer/:jobId/task/:taskId/undo", (req, res) => {
   const job = jobs.get(req.params.jobId);
   const task = job?.tasks.find(t => t.id === req.params.taskId);
@@ -138,7 +164,9 @@ app.post("/x402/solana/schedoputer/:jobId/task/:taskId/undo", (req, res) => {
   res.json({ success: true });
 });
 
-/* ================= SCHEDULER (STATE ONLY) ================= */
+/* =====================================================
+   SCHEDULER (NO RESOURCE EXECUTION)
+===================================================== */
 setInterval(() => {
   const now = new Date();
 
@@ -158,13 +186,17 @@ setInterval(() => {
       }
     }
 
-    if (job.tasks.every(t => ["completed", "cancelled"].includes(t.status))) {
+    if (job.tasks.every(t =>
+      ["completed", "cancelled"].includes(t.status)
+    )) {
       job.state = "completed";
     }
   }
 }, 30_000);
 
-/* ================= START ================= */
+/* =====================================================
+   START SERVER
+===================================================== */
 app.listen(PORT, () => {
   console.log("🚀 Schedoputer backend live (x402-correct)");
 });
