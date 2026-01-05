@@ -4,6 +4,15 @@ import { v4 as uuidv4 } from "uuid";
 const app = express();
 app.use(express.json());
 
+// FIXED: Added middleware to handle trailing slashes which cause JSON parse errors on some runners
+app.use((req, res, next) => {
+  if (req.path.length > 1 && req.path.endsWith('/')) {
+    res.redirect(301, req.path.slice(0, -1));
+  } else {
+    next();
+  }
+});
+
 const PORT = process.env.PORT || 3000;
 
 /* ================= CONFIG ================= */
@@ -21,6 +30,9 @@ app.get("/.well-known/x402-verification.json", (_, res) => {
 
 /* ================= x402 DISCOVERY ================= */
 app.get("/x402/solana/schedoputer", (_, res) => {
+  // FIXED: The x402 protocol requires the resource URL in the header to avoid "MCP/Proxy" parse errors
+  res.set("x402-resource", `${BASE_URL}/x402/solana/schedoputer`);
+  
   res.status(402).json({
     x402Version: 1,
     accepts: [
@@ -161,5 +173,5 @@ setInterval(() => {
 
 /* ================= START ================= */
 app.listen(PORT, () => {
-  console.log("🚀 Schedoputer backend live (x402-correct)");
+  console.log("🚀 Schedoputer backend live (x402-fixed)");
 });
