@@ -50,7 +50,7 @@ app.get("/x402/solana/schedoputer", (req, res) => {
                 type: "string",
                 required: true,
                 description:
-                  "User instruction, e.g. 'Research DeFi on Base and promote it on X'"
+                  "User instruction"
               },
               schedule_hhmm: {
                 type: "string",
