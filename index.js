@@ -1,113 +1,90 @@
 import express from "express";
 import { v4 as uuidv4 } from "uuid";
-import cors from "cors";
 
 const app = express();
-
-/* =====================================================
-   SECURITY & CORS (Fixes "Fill in all fields" error)
-===================================================== */
-app.use(cors({
-  origin: "*",
-  methods: ["GET", "POST", "PATCH", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "x402-resource", "Authorization", "x-payment", "x-payment-signature"],
-  exposedHeaders: ["x402-resource"]
-}));
-
-// Bypass for ERR_BLOCKED_BY_RESPONSE.NotSameOrigin
-app.use((req, res, next) => {
-  res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
-  res.setHeader("Cross-Origin-Embedder-Policy", "unsafe-none");
-  next();
-});
-
 app.use(express.json());
 
-/* =====================================================
-   CONFIG & STATE
-===================================================== */
 const PORT = process.env.PORT || 3000;
+
+/* ================= CONFIG ================= */
 const BASE_URL = "https://schedoputer.onrender.com";
-const WALLET = "4n9vJHPezhghfF6NCTSPgTbkGoV7EsQYtC2hfaKfrM8U";
+const PAY_TO = "4n9vJHPezhghfF6NCTSPgTbkGoV7EsQYtC2hfaKfrM8U";
 const USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
 
+/* ================= STATE ================= */
 const jobs = new Map();
 
-/* =====================================================
-   DOMAIN VERIFICATION
-===================================================== */
+/* ================= DOMAIN VERIFICATION ================= */
 app.get("/.well-known/x402-verification.json", (_, res) => {
   res.json({ x402: "b470847b6c14" });
 });
 
-/* =====================================================
-   x402 DISCOVERY (Step 1 Fix: Added feePayer)
-===================================================== */
-app.get("/x402/solana/schedoputer", (req, res) => {
-  const resourceUrl = `${BASE_URL}/x402/solana/schedoputer`;
-  res.set("x402-resource", resourceUrl);
-
-  res.status(402).json({
+/* ================= 402 RESPONSE HELPER ================= */
+function send402(res) {
+  return res.status(402).json({
     x402Version: 1,
     accepts: [
       {
         scheme: "exact",
         network: "solana",
+        maxAmountRequired: "10000",
         asset: USDC_MINT,
-        maxAmountRequired: "10000", // $0.01 USDC
-        payTo: WALLET,
-        resource: resourceUrl,
+        payTo: PAY_TO,
+        resource: `${BASE_URL}/x402/solana/schedoputer`,
         mimeType: "application/json",
-        description: "Schedoputer – AI + human workflow orchestration",
-        extra: {
-          pricing: { amount: 0.01, currency: "USDC", network: "Solana" },
-          serviceName: "Schedoputer",
-          // 🔥 CRITICAL: Required by facilitator to build the transaction
-          feePayer: WALLET,
-          facilitator: WALLET
+        maxTimeoutSeconds: 300,
+        description:
+          "Schedoputer orchestrates scheduled AI + human workflows with per-task modify/undo control.",
+        outputSchema: {
+          input: {
+            type: "http",
+            method: "POST",
+            bodyType: "json",
+            bodyFields: {
+              prompt: { type: "string", required: true },
+              schedule_hhmm: { type: "string", required: true }
+            }
+          },
+          output: {
+            success: { type: "boolean" },
+            jobId: { type: "string" },
+            scheduledFor: { type: "string" },
+            statusUrl: { type: "string" }
+          }
         }
       }
     ]
   });
-});
-
-/* =====================================================
-   PAYMENT GATEWAY (Step 2)
-===================================================== */
-function requirePayment(req, res, next) {
-  const payment = req.headers["authorization"] || req.headers["x-payment"] || req.headers["x-payment-signature"];
-  
-  if (!payment) {
-    res.set("x402-resource", `${BASE_URL}/x402/solana/schedoputer`);
-    return res.status(402).json({
-      x402Version: 1,
-      error: "Payment required",
-      accepts: [{
-          scheme: "exact",
-          network: "solana",
-          asset: USDC_MINT,
-          maxAmountRequired: "10000",
-          payTo: WALLET,
-          resource: `${BASE_URL}/x402/solana/schedoputer`,
-          extra: { feePayer: WALLET }
-      }]
-    });
-  }
-  next();
 }
 
-/* =====================================================
-   JOB INVOCATION (POST)
-===================================================== */
-app.post("/x402/solana/schedoputer", requirePayment, (req, res) => {
-  const { prompt, schedule_hhmm } = req.body;
+/* ================= x402 DISCOVERY ================= */
+app.get("/x402/solana/schedoputer", (_, res) => {
+  return send402(res);
+});
 
+/* ================= PAID INVOCATION ================= */
+app.post("/x402/solana/schedoputer", (req, res) => {
+  // 🔑 CRITICAL FIX: return 402, not redirect
+  if (!req.headers["x-payment"]) {
+    return send402(res);
+  }
+
+  const { prompt, schedule_hhmm } = req.body;
   if (!prompt || !schedule_hhmm) {
-    return res.status(400).json({ error: "prompt and schedule_hhmm required" });
+    return res.status(400).json({
+      error: "prompt and schedule_hhmm required"
+    });
   }
 
   const [hh, mm] = schedule_hhmm.split(":").map(Number);
-  const scheduledFor = new Date(Date.now() + (hh * 60 + mm) * 60 * 1000);
+  if (Number.isNaN(hh) || Number.isNaN(mm)) {
+    return res.status(400).json({ error: "Invalid schedule_hhmm" });
+  }
+
+  const scheduledFor = new Date(
+    Date.now() + (hh * 60 + mm) * 60 * 1000
+  );
+
   const jobId = uuidv4();
 
   jobs.set(jobId, {
@@ -133,55 +110,74 @@ app.post("/x402/solana/schedoputer", requirePayment, (req, res) => {
   });
 });
 
-/* =====================================================
-   STATUS, MODIFY & UNDO
-===================================================== */
+/* ================= STATUS ================= */
 app.get("/x402/solana/schedoputer/status/:jobId", (req, res) => {
   const job = jobs.get(req.params.jobId);
-  if (!job) return res.status(404).json({ state: "failed", error: "Job not found" });
-  res.json({ state: job.state, tasks: job.tasks });
+  if (!job) {
+    return res.json({ state: "failed", error: "Job not found" });
+  }
+
+  res.json({
+    state: job.state,
+    tasks: job.tasks
+  });
 });
 
+/* ================= MODIFY ================= */
 app.patch("/x402/solana/schedoputer/:jobId/task/:taskId", (req, res) => {
   const job = jobs.get(req.params.jobId);
   const task = job?.tasks.find(t => t.id === req.params.taskId);
-  if (!task || task.status !== "pending") return res.status(400).json({ error: "Cannot modify" });
-  
+
+  if (!task || task.status !== "pending") {
+    return res.status(400).json({ error: "Task cannot be modified" });
+  }
+
   task.params = { ...task.params, ...req.body };
   res.json({ success: true });
 });
 
+/* ================= UNDO ================= */
 app.post("/x402/solana/schedoputer/:jobId/task/:taskId/undo", (req, res) => {
   const job = jobs.get(req.params.jobId);
   const task = job?.tasks.find(t => t.id === req.params.taskId);
-  if (!task || !task.undoable || task.status !== "pending") return res.status(400).json({ error: "Cannot undo" });
-  
+
+  if (!task || !task.undoable || task.status !== "pending") {
+    return res.status(400).json({ error: "Task cannot be undone" });
+  }
+
   task.status = "cancelled";
   res.json({ success: true });
 });
 
-/* =====================================================
-   SCHEDULER LOOP
-===================================================== */
+/* ================= SCHEDULER ================= */
 setInterval(() => {
   const now = new Date();
+
   for (const job of jobs.values()) {
-    if (job.state === "scheduled" && now >= job.scheduledFor) job.state = "running";
+    if (job.state === "scheduled" && now >= job.scheduledFor) {
+      job.state = "running";
+    }
+
     if (job.state !== "running") continue;
 
     for (const task of job.tasks) {
       if (task.status === "blocked") {
         const dep = job.tasks.find(t => t.id === task.dependsOn);
-        if (dep && dep.status === "completed") task.status = "pending";
+        if (dep && dep.status === "completed") {
+          task.status = "pending";
+        }
       }
     }
-    if (job.tasks.every(t => ["completed", "cancelled"].includes(t.status))) job.state = "completed";
-  }
-}, 30000);
 
-/* =====================================================
-   START SERVER
-===================================================== */
+    if (job.tasks.every(t =>
+      ["completed", "cancelled"].includes(t.status)
+    )) {
+      job.state = "completed";
+    }
+  }
+}, 30_000);
+
+/* ================= START ================= */
 app.listen(PORT, () => {
-  console.log(`🚀 Schedoputer live at ${BASE_URL}`);
+  console.log("🚀 Schedoputer backend live — Step 1 fixed");
 });
