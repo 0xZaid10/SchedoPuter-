@@ -11,8 +11,8 @@ const PORT = process.env.PORT || 3000;
    CONFIG
 ===================================================== */
 const USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
-const PAY_TO = "YOUR_SOLANA_WALLET"; // 👈 replace before deploy
-const BASE_URL = "https://x402-schedoputer.onrender.com"; // 👈 replace
+const PAY_TO = "4n9vJHPezhghfF6NCTSPgTbkGoV7EsQYtC2hfaKfrM8U"; // 👈 replace before deploy
+const BASE_URL = "https://schedoputer.onrender.com"; // 👈 replace
 
 /* =====================================================
    IN-MEMORY STORE
