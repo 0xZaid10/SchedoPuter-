@@ -35,35 +35,18 @@ app.get("/x402/solana/schedoputer", (_req, res) => {
       {
         scheme: "exact",
         network: "solana",
-        maxAmountRequired: "10000", // 0.01 USDC
-        asset: USDC_MINT,
-        payTo: PAY_TO,
-        resource: `${BASE_URL}/x402/solana/schedoputer`,
+        asset: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+        maxAmountRequired: "10000",
+        payTo: "4n9vJHPezhghfF6NCTSPgTbkGoV7EsQYtC2hfaKfrM8U",
+        resource: "https://schedoputer.onrender.com/x402/solana/schedoputer",
         mimeType: "application/json",
         maxTimeoutSeconds: 300,
-        description:
-          "Schedoputer orchestrates scheduled AI + human workflows with per-task modify/undo control.",
-        outputSchema: {
-          input: {
-            type: "http",
-            method: "POST",
-            bodyType: "json",
-            bodyFields: {
-              prompt: { type: "string", required: true },
-              schedule_hhmm: { type: "string", required: true }
-            }
-          },
-          output: {
-            success: { type: "boolean" },
-            jobId: { type: "string" },
-            scheduledFor: { type: "string" },
-            statusUrl: { type: "string" }
-          }
-        }
+        description: "Schedoputer – scheduled AI + human workflows"
       }
     ]
   });
 });
+
 
 /* =====================================================
    🔑 PAYMENT GATE (CRITICAL)
