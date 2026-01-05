@@ -55,7 +55,7 @@ app.get("/x402/solana/schedoputer", (_, res) => {
       {
         scheme: "exact",
         network: "solana",
-        maxAmountRequired: "1000000", // Increased to 1 USDC for compatibility
+        maxAmountRequired: "10000", // Increased to 1 USDC for compatibility
         asset: USDC_MINT,
         payTo: PAY_TO,
         resource: resourceUrl,
