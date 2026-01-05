@@ -14,19 +14,19 @@ const PAY_TO = "4n9vJHPezhghfF6NCTSPgTbkGoV7EsQYtC2hfaKfrM8U";
 const USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
 
 /* =====================================================
-   IN-MEMORY STATE (hackathon-safe)
+   STATE (hackathon-safe)
 ===================================================== */
 const jobs = new Map();
 
 /* =====================================================
-   DOMAIN VERIFICATION (x402scan / x402.jobs)
+   DOMAIN VERIFICATION
 ===================================================== */
 app.get("/.well-known/x402-verification.json", (_req, res) => {
   res.json({ x402: "b470847b6c14" });
 });
 
 /* =====================================================
-   x402 DISCOVERY (PAYMENT HAPPENS HERE)
+   x402 DISCOVERY (ALWAYS 402)
 ===================================================== */
 app.get("/x402/solana/schedoputer", (_req, res) => {
   res.status(402).json({
@@ -49,16 +49,8 @@ app.get("/x402/solana/schedoputer", (_req, res) => {
             method: "POST",
             bodyType: "json",
             bodyFields: {
-              prompt: {
-                type: "string",
-                required: true,
-                description: "User instruction"
-              },
-              schedule_hhmm: {
-                type: "string",
-                required: true,
-                description: "Delay before execution (hh:mm)"
-              }
+              prompt: { type: "string", required: true },
+              schedule_hhmm: { type: "string", required: true }
             }
           },
           output: {
@@ -74,53 +66,75 @@ app.get("/x402/solana/schedoputer", (_req, res) => {
 });
 
 /* =====================================================
-   PAID INVOCATION (CALLED AFTER PAYMENT)
+   🔑 PAYMENT GATE (CRITICAL)
 ===================================================== */
-app.post("/x402/solana/schedoputer", (req, res) => {
-  const { prompt, schedule_hhmm } = req.body;
+function requirePayment(req, res, next) {
+  const payment =
+    req.headers["authorization"] ||
+    req.headers["x-payment"];
 
-  if (!prompt || !schedule_hhmm) {
-    return res.status(400).json({
-      error: "prompt and schedule_hhmm required"
+  if (!payment) {
+    return res.status(402).json({
+      x402Version: 1,
+      error: "Payment required"
     });
   }
 
-  const [hh, mm] = schedule_hhmm.split(":").map(Number);
-  if (Number.isNaN(hh) || Number.isNaN(mm)) {
-    return res.status(400).json({ error: "Invalid schedule_hhmm format" });
-  }
-
-  const scheduledFor = new Date(
-    Date.now() + (hh * 60 + mm) * 60 * 1000
-  );
-
-  const jobId = uuidv4();
-
-  jobs.set(jobId, {
-    jobId,
-    prompt,
-    scheduledFor,
-    state: "scheduled",
-    tasks: [
-      { id: "T1", name: "research", status: "pending" },
-      { id: "T2", name: "tweet", status: "blocked", dependsOn: "T1" },
-      { id: "T3", name: "post", status: "blocked", dependsOn: "T2" },
-      { id: "T4", name: "likes", status: "blocked", undoable: true, dependsOn: "T3" },
-      { id: "T5", name: "reposts", status: "blocked", undoable: true, dependsOn: "T3" },
-      { id: "T6", name: "comments", status: "blocked", undoable: true, dependsOn: "T3" }
-    ]
-  });
-
-  res.json({
-    success: true,
-    jobId,
-    scheduledFor: scheduledFor.toISOString(),
-    statusUrl: `${BASE_URL}/x402/solana/schedoputer/status/${jobId}`
-  });
-});
+  // x402.jobs already validated payment
+  next();
+}
 
 /* =====================================================
-   JOB STATUS (LRO)
+   PAID INVOCATION (AFTER PAYMENT)
+===================================================== */
+app.post(
+  "/x402/solana/schedoputer",
+  requirePayment,
+  (req, res) => {
+    const { prompt, schedule_hhmm } = req.body;
+
+    if (!prompt || !schedule_hhmm) {
+      return res.status(400).json({
+        error: "prompt and schedule_hhmm required"
+      });
+    }
+
+    const [hh, mm] = schedule_hhmm.split(":").map(Number);
+    if (Number.isNaN(hh) || Number.isNaN(mm)) {
+      return res.status(400).json({ error: "Invalid schedule_hhmm format" });
+    }
+
+    const scheduledFor =
+      new Date(Date.now() + (hh * 60 + mm) * 60 * 1000);
+
+    const jobId = uuidv4();
+
+    jobs.set(jobId, {
+      jobId,
+      prompt,
+      scheduledFor,
+      state: "scheduled",
+      tasks: [
+        { id: "T1", name: "research", status: "pending" },
+        { id: "T2", name: "tweet", status: "blocked", dependsOn: "T1" },
+        { id: "T3", name: "post", status: "blocked", dependsOn: "T2" },
+        { id: "T4", name: "likes", status: "blocked", undoable: true, dependsOn: "T3" },
+        { id: "T5", name: "reposts", status: "blocked", undoable: true, dependsOn: "T3" },
+        { id: "T6", name: "comments", status: "blocked", undoable: true, dependsOn: "T3" }
+      ]
+    });
+
+    res.json({
+      success: true,
+      jobId,
+      scheduledFor: scheduledFor.toISOString(),
+      statusUrl: `${BASE_URL}/x402/solana/schedoputer/status/${jobId}`
+    });
+  }
+);
+
+/* =====================================================
+   STATUS
 ===================================================== */
 app.get("/x402/solana/schedoputer/status/:jobId", (req, res) => {
   const job = jobs.get(req.params.jobId);
@@ -135,7 +149,7 @@ app.get("/x402/solana/schedoputer/status/:jobId", (req, res) => {
 });
 
 /* =====================================================
-   MODIFY TASK (pre-execution only)
+   MODIFY TASK
 ===================================================== */
 app.patch("/x402/solana/schedoputer/:jobId/task/:taskId", (req, res) => {
   const job = jobs.get(req.params.jobId);
@@ -150,7 +164,7 @@ app.patch("/x402/solana/schedoputer/:jobId/task/:taskId", (req, res) => {
 });
 
 /* =====================================================
-   UNDO TASK (supported tasks only)
+   UNDO TASK
 ===================================================== */
 app.post("/x402/solana/schedoputer/:jobId/task/:taskId/undo", (req, res) => {
   const job = jobs.get(req.params.jobId);
@@ -165,7 +179,7 @@ app.post("/x402/solana/schedoputer/:jobId/task/:taskId/undo", (req, res) => {
 });
 
 /* =====================================================
-   SCHEDULER (NO RESOURCE EXECUTION)
+   SCHEDULER
 ===================================================== */
 setInterval(() => {
   const now = new Date();
@@ -195,8 +209,8 @@ setInterval(() => {
 }, 30_000);
 
 /* =====================================================
-   START SERVER
+   START
 ===================================================== */
 app.listen(PORT, () => {
-  console.log("🚀 Schedoputer backend live (x402-correct)");
+  console.log("🚀 Schedoputer backend live (PAYMENT FIXED)");
 });
