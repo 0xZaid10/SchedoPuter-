@@ -3,33 +3,14 @@ import { v4 as uuidv4 } from "uuid";
 
 const app = express();
 
-/* ================= RAW BODY LOGGER ================= */
-app.use((req, res, next) => {
-  let raw = "";
-  req.on("data", chunk => {
-    raw += chunk;
-  });
-  req.on("end", () => {
-    req.rawBody = raw;
-    next();
-  });
-});
-
-/* ================= JSON PARSER ================= */
-app.use(express.json({ strict: false }));
-
-/* ================= GLOBAL DEBUG STATE ================= */
-let LAST_DEBUG = null;
-
-function debugLog(label, data) {
-  const payload = {
-    time: new Date().toISOString(),
-    label,
-    data
-  };
-  console.log("🪵 DEBUG:", JSON.stringify(payload, null, 2));
-  LAST_DEBUG = payload;
-}
+/* ================= SAFE RAW BODY CAPTURE ================= */
+app.use(
+  express.json({
+    verify: (req, _res, buf) => {
+      req.rawBody = buf?.toString() || "";
+    }
+  })
+);
 
 /* ================= CONFIG ================= */
 const PORT = process.env.PORT || 3000;
@@ -40,8 +21,19 @@ const USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
 
 /* ================= STATE ================= */
 const jobs = new Map();
+let LAST_DEBUG = null;
 
-/* ================= DEBUG INSPECTION ENDPOINT ================= */
+function debug(label, data) {
+  const payload = {
+    time: new Date().toISOString(),
+    label,
+    data
+  };
+  console.log("🪵 DEBUG:", JSON.stringify(payload, null, 2));
+  LAST_DEBUG = payload;
+}
+
+/* ================= DEBUG INSPECT ================= */
 app.get("/debug/last", (_req, res) => {
   res.json(LAST_DEBUG || { message: "No debug data yet" });
 });
@@ -51,10 +43,9 @@ app.get("/.well-known/x402-verification.json", (_req, res) => {
   res.json({ x402: "b470847b6c14" });
 });
 
-/* ================= 402 RESPONSE BUILDER ================= */
+/* ================= 402 RESPONSE ================= */
 function send402(req, res) {
-  debugLog("SEND_402", {
-    path: req.path,
+  debug("SEND_402", {
     headers: req.headers,
     rawBody: req.rawBody
   });
@@ -100,37 +91,28 @@ function send402(req, res) {
 
 /* ================= DISCOVERY ================= */
 app.get("/x402/solana/schedoputer", (req, res) => {
-  debugLog("DISCOVERY_CALL", {
-    headers: req.headers
-  });
+  debug("DISCOVERY", req.headers);
   return send402(req, res);
 });
 
 /* ================= PAID INVOCATION ================= */
 app.post("/x402/solana/schedoputer", (req, res) => {
-  debugLog("POST_INVOKE", {
+  debug("POST_INVOKE", {
     headers: req.headers,
     body: req.body,
     rawBody: req.rawBody
   });
 
-  // 🔥 This is CRITICAL — if missing, x402.jobs retries
+  // REQUIRED: x402 payment header
   if (!req.headers["x-payment"]) {
-    debugLog("MISSING_PAYMENT_HEADER", req.headers);
+    debug("NO_PAYMENT_HEADER", req.headers);
     return send402(req, res);
   }
 
-  let prompt, schedule_hhmm;
-
-  try {
-    ({ prompt, schedule_hhmm } = req.body);
-  } catch (e) {
-    debugLog("BODY_PARSE_ERROR", e.message);
-    return res.status(400).json({ error: "Invalid JSON body" });
-  }
+  const { prompt, schedule_hhmm } = req.body || {};
 
   if (!prompt || !schedule_hhmm) {
-    debugLog("MISSING_FIELDS", req.body);
+    debug("MISSING_FIELDS", req.body);
     return res.status(400).json({
       error: "prompt and schedule_hhmm required"
     });
@@ -138,7 +120,6 @@ app.post("/x402/solana/schedoputer", (req, res) => {
 
   const [hh, mm] = schedule_hhmm.split(":").map(Number);
   if (Number.isNaN(hh) || Number.isNaN(mm)) {
-    debugLog("INVALID_SCHEDULE", schedule_hhmm);
     return res.status(400).json({ error: "Invalid schedule_hhmm" });
   }
 
@@ -152,8 +133,7 @@ app.post("/x402/solana/schedoputer", (req, res) => {
     jobId,
     prompt,
     scheduledFor,
-    state: "scheduled",
-    tasks: []
+    state: "scheduled"
   });
 
   const response = {
@@ -163,14 +143,14 @@ app.post("/x402/solana/schedoputer", (req, res) => {
     statusUrl: `${BASE_URL}/x402/solana/schedoputer/status/${jobId}`
   };
 
-  debugLog("POST_SUCCESS_RESPONSE", response);
-  return res.json(response);
+  debug("SUCCESS_RESPONSE", response);
+  res.json(response);
 });
 
 /* ================= STATUS ================= */
 app.get("/x402/solana/schedoputer/status/:jobId", (req, res) => {
   const job = jobs.get(req.params.jobId);
-  debugLog("STATUS_CHECK", { jobId: req.params.jobId, job });
+  debug("STATUS_CHECK", job);
 
   if (!job) {
     return res.json({ state: "failed", error: "Job not found" });
@@ -185,5 +165,5 @@ app.get("/x402/solana/schedoputer/status/:jobId", (req, res) => {
 
 /* ================= START ================= */
 app.listen(PORT, () => {
-  console.log("🚀 Schedoputer DEBUG backend live");
+  console.log("🚀 Schedoputer backend LIVE & STREAM-SAFE");
 });
