@@ -6,20 +6,21 @@ app.use(express.json());
 
 const PORT = process.env.PORT || 3000;
 
+/* ================= CONFIG ================= */
 const USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
 const PAY_TO = "4n9vJHPezhghfF6NCTSPgTbkGoV7EsQYtC2hfaKfrM8U";
 const BASE_URL = "https://schedoputer.onrender.com";
 
-/* ================= IN-MEMORY STATE ================= */
+/* ================= STATE ================= */
 const jobs = new Map();
 
 /* ================= DOMAIN VERIFICATION ================= */
-app.get("/.well-known/x402-verification.json", (req, res) => {
+app.get("/.well-known/x402-verification.json", (_, res) => {
   res.json({ x402: "b470847b6c14" });
 });
 
 /* ================= x402 DISCOVERY ================= */
-app.get("/x402/solana/schedoputer", (req, res) => {
+app.get("/x402/solana/schedoputer", (_, res) => {
   res.status(402).json({
     x402Version: 1,
     accepts: [
@@ -33,7 +34,7 @@ app.get("/x402/solana/schedoputer", (req, res) => {
         mimeType: "application/json",
         maxTimeoutSeconds: 300,
         description:
-          "Schedoputer orchestrates scheduled AI + human workflows with per-task control (modify / undo).",
+          "Schedoputer orchestrates scheduled AI + human workflows with per-task modify/undo control.",
         outputSchema: {
           input: {
             type: "http",
@@ -59,11 +60,16 @@ app.get("/x402/solana/schedoputer", (req, res) => {
 /* ================= CREATE JOB ================= */
 app.post("/x402/solana/schedoputer", (req, res) => {
   const { prompt, schedule_hhmm } = req.body;
+
   if (!prompt || !schedule_hhmm) {
     return res.status(400).json({ error: "prompt and schedule_hhmm required" });
   }
 
   const [hh, mm] = schedule_hhmm.split(":").map(Number);
+  if (Number.isNaN(hh) || Number.isNaN(mm)) {
+    return res.status(400).json({ error: "Invalid schedule_hhmm" });
+  }
+
   const scheduledFor = new Date(Date.now() + (hh * 60 + mm) * 60 * 1000);
   const jobId = uuidv4();
 
@@ -72,14 +78,13 @@ app.post("/x402/solana/schedoputer", (req, res) => {
     prompt,
     scheduledFor,
     state: "scheduled",
-    currentTaskIndex: 0,
     tasks: [
       { id: "T1", name: "research", status: "pending" },
-      { id: "T2", name: "tweet", status: "pending", dependsOn: "T1" },
-      { id: "T3", name: "post", status: "pending", dependsOn: "T2" },
-      { id: "T4", name: "likes", status: "pending", undoable: true, dependsOn: "T3" },
-      { id: "T5", name: "reposts", status: "pending", undoable: true, dependsOn: "T3" },
-      { id: "T6", name: "comments", status: "pending", undoable: true, dependsOn: "T3" }
+      { id: "T2", name: "tweet", status: "blocked", dependsOn: "T1" },
+      { id: "T3", name: "post", status: "blocked", dependsOn: "T2" },
+      { id: "T4", name: "likes", status: "blocked", undoable: true, dependsOn: "T3" },
+      { id: "T5", name: "reposts", status: "blocked", undoable: true, dependsOn: "T3" },
+      { id: "T6", name: "comments", status: "blocked", undoable: true, dependsOn: "T3" }
     ]
   });
 
@@ -139,22 +144,22 @@ setInterval(() => {
 
     if (job.state !== "running") continue;
 
-    const next = job.tasks.find(t => t.status === "pending");
-    if (!next) {
+    for (const task of job.tasks) {
+      if (task.status === "blocked") {
+        const dep = job.tasks.find(t => t.id === task.dependsOn);
+        if (dep && dep.status === "completed") {
+          task.status = "pending";
+        }
+      }
+    }
+
+    if (job.tasks.every(t => ["completed", "cancelled"].includes(t.status))) {
       job.state = "completed";
-      continue;
     }
-
-    if (next.dependsOn) {
-      const dep = job.tasks.find(t => t.id === next.dependsOn);
-      if (!dep || dep.status !== "completed") continue;
-    }
-
-    // Mark ready — x402.jobs executes actual resource
-    next.status = "ready";
   }
 }, 30_000);
 
+/* ================= START ================= */
 app.listen(PORT, () => {
-  console.log("🚀 Schedoputer backend live & x402-correct");
+  console.log("🚀 Schedoputer backend live (x402-correct)");
 });
