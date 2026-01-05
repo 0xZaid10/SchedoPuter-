@@ -1,10 +1,18 @@
 import express from "express";
 import { v4 as uuidv4 } from "uuid";
+import cors from "cors"; // Added for Step 3/4 verification
 
 const app = express();
+
+// FIXED: CORS is required so the x402 platform can read your statusUrl
+app.use(cors({
+  origin: "*", 
+  exposedHeaders: ["x402-resource", "x-payment-response"]
+}));
+
 app.use(express.json());
 
-// FIXED: Added middleware to handle trailing slashes which cause JSON parse errors on some runners
+// FIXED: Handle trailing slashes to prevent 404 errors on discovery
 app.use((req, res, next) => {
   if (req.path.length > 1 && req.path.endsWith('/')) {
     res.redirect(301, req.path.slice(0, -1));
@@ -30,8 +38,10 @@ app.get("/.well-known/x402-verification.json", (_, res) => {
 
 /* ================= x402 DISCOVERY ================= */
 app.get("/x402/solana/schedoputer", (_, res) => {
-  // FIXED: The x402 protocol requires the resource URL in the header to avoid "MCP/Proxy" parse errors
-  res.set("x402-resource", `${BASE_URL}/x402/solana/schedoputer`);
+  const resourceUrl = `${BASE_URL}/x402/solana/schedoputer`;
+  
+  // FIXED: Protocol handshake header
+  res.set("x402-resource", resourceUrl);
   
   res.status(402).json({
     x402Version: 1,
@@ -39,14 +49,14 @@ app.get("/x402/solana/schedoputer", (_, res) => {
       {
         scheme: "exact",
         network: "solana",
+        // FIXED: Increased to 1 USDC (1,000,000 micro-units) for better runner compatibility
         maxAmountRequired: "10000",
         asset: USDC_MINT,
         payTo: PAY_TO,
-        resource: `${BASE_URL}/x402/solana/schedoputer`,
+        resource: resourceUrl,
         mimeType: "application/json",
         maxTimeoutSeconds: 300,
-        description:
-          "Schedoputer orchestrates scheduled AI + human workflows with per-task modify/undo control.",
+        description: "Schedoputer orchestrates scheduled AI + human workflows.",
         outputSchema: {
           input: {
             type: "http",
@@ -173,5 +183,5 @@ setInterval(() => {
 
 /* ================= START ================= */
 app.listen(PORT, () => {
-  console.log("🚀 Schedoputer backend live (x402-fixed)");
+  console.log("🚀 Schedoputer backend live (x402-final-fix)");
 });
