@@ -13,6 +13,14 @@ const BASE_URL = "https://schedoputer.onrender.com";
 
 const jobs = new Map();
 
+/* =====================================================
+   x402 DOMAIN VERIFICATION
+===================================================== */
+app.get("/.well-known/x402-verification.json", (req, res) => {
+  res.json({ x402: "b470847b6c14" });
+});
+
+
 /* ===================== x402 DISCOVERY ===================== */
 app.get("/x402/solana/schedoputer", (req, res) => {
   res.status(402).json({
