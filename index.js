@@ -1,5 +1,4 @@
 import express from "express";
-import fetch from "node-fetch";
 import { v4 as uuidv4 } from "uuid";
 
 const app = express();
@@ -11,17 +10,15 @@ const USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
 const PAY_TO = "4n9vJHPezhghfF6NCTSPgTbkGoV7EsQYtC2hfaKfrM8U";
 const BASE_URL = "https://schedoputer.onrender.com";
 
+/* ================= IN-MEMORY STATE ================= */
 const jobs = new Map();
 
-/* =====================================================
-   x402 DOMAIN VERIFICATION
-===================================================== */
+/* ================= DOMAIN VERIFICATION ================= */
 app.get("/.well-known/x402-verification.json", (req, res) => {
   res.json({ x402: "b470847b6c14" });
 });
 
-
-/* ===================== x402 DISCOVERY ===================== */
+/* ================= x402 DISCOVERY ================= */
 app.get("/x402/solana/schedoputer", (req, res) => {
   res.status(402).json({
     x402Version: 1,
@@ -29,48 +26,29 @@ app.get("/x402/solana/schedoputer", (req, res) => {
       {
         scheme: "exact",
         network: "solana",
-        maxAmountRequired: "10000", // 0.01 USDC
+        maxAmountRequired: "10000",
         asset: USDC_MINT,
         payTo: PAY_TO,
         resource: `${BASE_URL}/x402/solana/schedoputer`,
         mimeType: "application/json",
         maxTimeoutSeconds: 300,
-
         description:
-          "Schedoputer orchestrates scheduled AI + human workflows with per-task control (modify/undo).",
-
-        /* 🔑 THIS IS WHAT YOU WERE MISSING */
+          "Schedoputer orchestrates scheduled AI + human workflows with per-task control (modify / undo).",
         outputSchema: {
           input: {
             type: "http",
             method: "POST",
             bodyType: "json",
             bodyFields: {
-              prompt: {
-                type: "string",
-                required: true,
-                description:
-                  "User instruction"
-              },
-              schedule_hhmm: {
-                type: "string",
-                required: true,
-                description:
-                  "Delay before execution in hh:mm (hours:minutes)"
-              }
+              prompt: { type: "string", required: true },
+              schedule_hhmm: { type: "string", required: true }
             }
           },
           output: {
             success: { type: "boolean" },
             jobId: { type: "string" },
-            scheduledFor: {
-              type: "string",
-              description: "ISO timestamp when job will start"
-            },
-            statusUrl: {
-              type: "string",
-              description: "Polling endpoint for job status"
-            }
+            scheduledFor: { type: "string" },
+            statusUrl: { type: "string" }
           }
         }
       }
@@ -78,7 +56,7 @@ app.get("/x402/solana/schedoputer", (req, res) => {
   });
 });
 
-/* ===================== CREATE JOB ===================== */
+/* ================= CREATE JOB ================= */
 app.post("/x402/solana/schedoputer", (req, res) => {
   const { prompt, schedule_hhmm } = req.body;
   if (!prompt || !schedule_hhmm) {
@@ -94,32 +72,37 @@ app.post("/x402/solana/schedoputer", (req, res) => {
     prompt,
     scheduledFor,
     state: "scheduled",
-    context: {},
+    currentTaskIndex: 0,
     tasks: [
-      { id: "T1", name: "research", url: "https://api.syraa.fun/x-search", status: "pending" },
-      { id: "T2", name: "tweet", url: "https://x402factory.ai/solana/llm/gpt/AW5793DBAYAHSEHJTU", status: "pending", dependsOn: "T1" },
-      { id: "T3", name: "post", url: "https://wurkapi.fun/solana/agenthelp/10", status: "pending", dependsOn: "T2" },
-      { id: "T4", name: "likes", url: "https://wurkapi.fun/api/x402/quick/solana/xlikes-20", status: "pending", undoable: true, dependsOn: "T3" },
-      { id: "T5", name: "reposts", url: "https://wurkapi.fun/solana/reposts/9", status: "pending", undoable: true, dependsOn: "T3" },
-      { id: "T6", name: "comments", url: "https://wurkapi.fun/solana/comments/7", status: "pending", undoable: true, dependsOn: "T3" }
+      { id: "T1", name: "research", status: "pending" },
+      { id: "T2", name: "tweet", status: "pending", dependsOn: "T1" },
+      { id: "T3", name: "post", status: "pending", dependsOn: "T2" },
+      { id: "T4", name: "likes", status: "pending", undoable: true, dependsOn: "T3" },
+      { id: "T5", name: "reposts", status: "pending", undoable: true, dependsOn: "T3" },
+      { id: "T6", name: "comments", status: "pending", undoable: true, dependsOn: "T3" }
     ]
   });
 
   res.json({
     success: true,
     jobId,
+    scheduledFor: scheduledFor.toISOString(),
     statusUrl: `${BASE_URL}/x402/solana/schedoputer/status/${jobId}`
   });
 });
 
-/* ===================== STATUS ===================== */
+/* ================= STATUS ================= */
 app.get("/x402/solana/schedoputer/status/:jobId", (req, res) => {
   const job = jobs.get(req.params.jobId);
   if (!job) return res.json({ state: "failed" });
-  res.json({ state: job.state, context: job.context, tasks: job.tasks });
+
+  res.json({
+    state: job.state,
+    tasks: job.tasks
+  });
 });
 
-/* ===================== MODIFY TASK ===================== */
+/* ================= MODIFY ================= */
 app.patch("/x402/solana/schedoputer/:jobId/task/:taskId", (req, res) => {
   const job = jobs.get(req.params.jobId);
   const task = job?.tasks.find(t => t.id === req.params.taskId);
@@ -132,7 +115,7 @@ app.patch("/x402/solana/schedoputer/:jobId/task/:taskId", (req, res) => {
   res.json({ success: true });
 });
 
-/* ===================== UNDO TASK ===================== */
+/* ================= UNDO ================= */
 app.post("/x402/solana/schedoputer/:jobId/task/:taskId/undo", (req, res) => {
   const job = jobs.get(req.params.jobId);
   const task = job?.tasks.find(t => t.id === req.params.taskId);
@@ -145,39 +128,33 @@ app.post("/x402/solana/schedoputer/:jobId/task/:taskId/undo", (req, res) => {
   res.json({ success: true });
 });
 
-/* ===================== EXECUTOR ===================== */
-setInterval(async () => {
+/* ================= SCHEDULER ================= */
+setInterval(() => {
+  const now = new Date();
+
   for (const job of jobs.values()) {
-    if (job.state === "scheduled" && new Date() >= job.scheduledFor) {
+    if (job.state === "scheduled" && now >= job.scheduledFor) {
       job.state = "running";
     }
 
     if (job.state !== "running") continue;
 
-    for (const task of job.tasks) {
-      if (task.status !== "pending") continue;
-      if (task.dependsOn) {
-        const dep = job.tasks.find(t => t.id === task.dependsOn);
-        if (!dep || dep.status !== "completed") continue;
-      }
-
-      const r = await fetch(task.url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query: job.prompt })
-      });
-
-      if (r.status === 402) return; // x402.jobs will retry
-
-      const data = await r.json();
-      job.context[task.name] = data;
-      task.status = "completed";
+    const next = job.tasks.find(t => t.status === "pending");
+    if (!next) {
+      job.state = "completed";
+      continue;
     }
 
-    job.state = "completed";
+    if (next.dependsOn) {
+      const dep = job.tasks.find(t => t.id === next.dependsOn);
+      if (!dep || dep.status !== "completed") continue;
+    }
+
+    // Mark ready — x402.jobs executes actual resource
+    next.status = "ready";
   }
-}, 30000);
+}, 30_000);
 
 app.listen(PORT, () => {
-  console.log("🚀 Schedoputer fully live");
+  console.log("🚀 Schedoputer backend live & x402-correct");
 });
